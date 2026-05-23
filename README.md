@@ -4,21 +4,23 @@ A recurring time sink: switching between Word and PDF formats means opening an a
 
 This tool puts the conversion one right-click away — no app switch, no menus, no dialog boxes.
 
-![Right-click a .docx → Quick Actions → Convert to PDF](.github/demo.png)
-
 ## What it does
 
-- Right-click any `.docx` or `.doc` → **Quick Actions → Convert to PDF**
-- Right-click any `.pdf` → **Quick Actions → Convert to Word**
+- Right-click any `.docx` or `.doc` → **Services → Convert to PDF**
+- Right-click any `.pdf` → **Services → Convert to Word**
 - Select multiple files and convert them all at once
-- Output lands in the same folder as the original
+- Output lands in the same folder as the original, silently — no app windows open
 - A native macOS notification confirms when it's done (or tells you exactly what went wrong)
 
 ## Requirements
 
 - macOS (Ventura or later recommended)
 - Python 3 — install via [Homebrew](https://brew.sh): `brew install python3`
-- Google Chrome — used for the DOCX → PDF step (renders via Chrome headless)
+- **LibreOffice** — for high-quality DOCX → PDF (recommended):
+  ```bash
+  brew install --cask libreoffice
+  ```
+  If LibreOffice is absent, the installer falls back to `textutil` + Chrome headless (lower fidelity).
 - No account, no subscription, no internet connection needed after install
 
 ## Install
@@ -29,21 +31,36 @@ cd doc-converter
 ./install.sh
 ```
 
-The installer creates an isolated Python environment at `~/.doc-converter/`, installs the two conversion libraries there, and registers the Quick Actions with macOS. Re-running `install.sh` is safe — it updates packages in place.
+The installer:
+1. Creates an isolated Python environment at `~/.doc-converter/`
+2. Installs `pdf2docx` for PDF → DOCX conversion
+3. Deploys the conversion script
+4. Registers two Finder Quick Actions in `~/Library/Services/`
+5. Auto-enables them in the macOS Services menu
 
-If the Quick Actions don't appear immediately after install, restart Finder:
+Re-running `install.sh` is safe — it updates everything in place.
+
+If the actions don't appear immediately, restart Finder:
 
 ```bash
 killall Finder
 ```
 
+## How to use
+
+Right-click a file in Finder → **Services** → **Convert to PDF** or **Convert to Word**.
+
+> macOS places user-created Automator services under the **Services** submenu (not Quick Actions, which is reserved for system and App Store extensions).
+
 ## How DOCX → PDF works
 
-Conversion is a two-step pipeline, entirely offline:
-1. **textutil** (macOS built-in) converts the DOCX to HTML
-2. **Chrome headless** renders the HTML to PDF via `--print-to-pdf`
+**Primary (recommended): LibreOffice headless**  
+`soffice --headless --convert-to pdf` — fully silent, preserves fonts and layout exactly, no windows open. Install with `brew install --cask libreoffice`.
 
-No app windows open. Microsoft Word is not required. Chrome must be installed (it almost certainly already is).
+**Fallback: textutil + Chrome headless**  
+macOS's built-in `textutil` converts DOCX to HTML; Chrome renders it to PDF. Always available but lower fidelity (some formatting may differ from the original).
+
+Microsoft Word is not required for either path.
 
 ## How PDF → DOCX works
 
