@@ -18,8 +18,8 @@ This tool puts the conversion one right-click away — no app switch, no menus, 
 
 - macOS (Ventura or later recommended)
 - Python 3 — install via [Homebrew](https://brew.sh): `brew install python3`
-- Microsoft Word — required for DOCX → PDF (uses Word's own export engine for exact fidelity)
-- No account, no subscription, no internet connection needed
+- Google Chrome — used for the DOCX → PDF step (renders via Chrome headless)
+- No account, no subscription, no internet connection needed after install
 
 ## Install
 
@@ -39,7 +39,11 @@ killall Finder
 
 ## How DOCX → PDF works
 
-The conversion drives Microsoft Word via macOS automation (JXA). The result is identical to doing File → Export → PDF inside Word — no quality loss, fonts and layout preserved. Word will briefly appear in the Dock while it runs; that's expected.
+Conversion is a two-step pipeline, entirely offline:
+1. **textutil** (macOS built-in) converts the DOCX to HTML
+2. **Chrome headless** renders the HTML to PDF via `--print-to-pdf`
+
+No app windows open. Microsoft Word is not required. Chrome must be installed (it almost certainly already is).
 
 ## How PDF → DOCX works
 
