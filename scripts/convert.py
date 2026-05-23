@@ -6,9 +6,11 @@ Entry points (called by Automator workflows in ~/Library/Services/):
   convert.py to_pdf   file1.docx [file2.docx …]
   convert.py to_docx  file1.pdf  [file2.pdf  …]
 
-DOCX → PDF: drives Microsoft Word via JXA (identical to File > Export PDF).
-            Word must be installed; it will briefly appear in the Dock.
-PDF → DOCX: parses PDF structure with PyMuPDF; layout quality varies by PDF.
+DOCX → PDF: LibreOffice headless (primary) — fully silent, high-quality,
+            preserves fonts and layout. Fallback: textutil + Chrome headless.
+            Microsoft Word is not required for either path.
+PDF → DOCX: parses PDF structure with PyMuPDF via pdf2docx; layout quality
+            varies by PDF complexity (best for text-heavy documents).
 """
 
 from __future__ import annotations
@@ -24,15 +26,17 @@ from dataclasses import dataclass, field
 # Format fields are injected at notification time — never build strings inline.
 MESSAGES: dict[str, tuple[str, str]] = {
     # (title_template, body_template)
-    "converting_single":  ("Converting to {fmt}…",               "{name}"),
-    "converting_batch":   ("Converting {n} files to {fmt}…",     "This may take a moment…"),
-    "success_single":     ("Convert to {fmt} ✓",                 "Saved: {name}"),
-    "success_batch":      ("Convert to {fmt} ✓",                 "{n} files converted"),
-    "partial_success":    ("Convert to {fmt} — {done}/{total}",  "{first_error}"),
-    "failure":            ("Convert to {fmt} — Error",           "{first_error}"),
-    "word_not_installed": ("Microsoft Word required",            "Install Word, then try Convert to PDF again."),
-    "package_missing":    ("Setup required — {fmt}",             "Run in Terminal: pip3 install {pkg}"),
-    "nothing_to_convert": ("Nothing converted",                  "No supported files were selected for {fmt}."),
+    "converting_single":   ("Converting to {fmt}…",               "{name}"),
+    "converting_batch":    ("Converting {n} files to {fmt}…",     "This may take a moment…"),
+    "success_single":      ("Convert to {fmt} ✓",                 "Saved: {name}"),
+    "success_batch":       ("Convert to {fmt} ✓",                 "{n} files converted"),
+    "partial_success":     ("Convert to {fmt} — {done}/{total}",  "{first_error}"),
+    "failure":             ("Convert to {fmt} — Error",           "{first_error}"),
+    "no_converter":        ("No PDF converter found",             "Install LibreOffice for best quality: brew install --cask libreoffice"),
+    "textutil_failed":     ("Convert to PDF — Error",             "textutil could not read the file: {detail}"),
+    "chrome_failed":       ("Convert to PDF — Error",             "Chrome PDF export failed: {detail}"),
+    "package_missing":     ("Setup required — {fmt}",             "Run in Terminal: pip3 install {pkg}"),
+    "nothing_to_convert":  ("Nothing converted",                  "No supported files were selected for {fmt}."),
 }
 
 
@@ -117,20 +121,12 @@ def convert_docx_to_pdf(input_path: str) -> ConversionResult:
             timeout=30,
         )
         if r1.returncode != 0:
-            return ConversionResult(
-                input_path,
-                error=(r1.stderr or r1.stdout).strip()[:120] or "textutil conversion failed",
-            )
+            detail = (r1.stderr or r1.stdout).strip()[:120] or "unknown error"
+            return ConversionResult(input_path, error=f"__textutil_failed__{detail}")
 
         chrome = _find_chrome()
         if chrome is None:
-            return ConversionResult(
-                input_path,
-                error=(
-                    "No PDF converter found. Install LibreOffice for best quality: "
-                    "brew install --cask libreoffice"
-                ),
-            )
+            return ConversionResult(input_path, error="__no_converter__")
 
         r2 = subprocess.run(
             [
@@ -147,10 +143,8 @@ def convert_docx_to_pdf(input_path: str) -> ConversionResult:
         )
 
         if r2.returncode != 0 or not os.path.exists(output_path):
-            return ConversionResult(
-                input_path,
-                error=(r2.stderr or r2.stdout).strip()[:120] or "Chrome PDF export failed",
-            )
+            detail = (r2.stderr or r2.stdout).strip()[:120] or "unknown error"
+            return ConversionResult(input_path, error=f"__chrome_failed__{detail}")
 
         return ConversionResult(input_path, output_path=output_path)
 
@@ -160,6 +154,16 @@ def convert_docx_to_pdf(input_path: str) -> ConversionResult:
 
 
 def convert_pdf_to_docx(input_path: str) -> ConversionResult:
+    """Convert PDF → DOCX using pdf2docx (offline, no external apps required).
+
+    pdf2docx uses PyMuPDF to parse PDF structure and reconstruct it as a Word
+    document. Quality is good for text-heavy PDFs; complex multi-column layouts
+    or scan-based PDFs may not reconstruct perfectly.
+
+    Returns a ConversionResult with error="__pkg_missing__" if pdf2docx is not
+    installed (installer sets it up, but the sentinel lets dispatch give a
+    helpful setup message instead of a raw exception).
+    """
     try:
         import logging  # noqa: PLC0415
         from pdf2docx import Converter  # noqa: PLC0415
@@ -184,13 +188,13 @@ _MODE_CONFIG = {
         "fmt":       "PDF",
         "exts":      (".docx", ".doc"),
         "converter": convert_docx_to_pdf,
-        "pkg":       "docx2pdf",
+        "pkg":       None,          # no pip package needed — uses LibreOffice or textutil+Chrome
     },
     "to_docx": {
         "fmt":       "Word",
         "exts":      (".pdf",),
         "converter": convert_pdf_to_docx,
-        "pkg":       "pdf2docx",
+        "pkg":       "pdf2docx",    # installed by install.sh into the venv
     },
 }
 
@@ -220,10 +224,18 @@ def dispatch_conversion(mode: str, files: list[str]) -> None:
     if failures:
         first_err = failures[0].error or "unknown error"
         if first_err == "__pkg_missing__":
-            post_notification("package_missing", sound=False, fmt=fmt, pkg=pkg)
+            post_notification("package_missing", sound=False, fmt=fmt, pkg=pkg or "")
             return
-        if first_err == "__word_not_installed__":
-            post_notification("word_not_installed", sound=False)
+        if first_err == "__no_converter__":
+            post_notification("no_converter", sound=False)
+            return
+        if first_err.startswith("__textutil_failed__"):
+            post_notification("textutil_failed", sound=False,
+                              detail=first_err.removeprefix("__textutil_failed__"))
+            return
+        if first_err.startswith("__chrome_failed__"):
+            post_notification("chrome_failed", sound=False,
+                              detail=first_err.removeprefix("__chrome_failed__"))
             return
 
     if not failures:
