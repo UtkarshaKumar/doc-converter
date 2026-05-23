@@ -65,6 +65,7 @@ class ConversionResult:
 
 # ── Converters ────────────────────────────────────────────────────────────
 
+_SOFFICE      = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
 _CHROME_CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -76,21 +77,35 @@ def _find_chrome() -> str | None:
 
 
 def convert_docx_to_pdf(input_path: str) -> ConversionResult:
-    """Convert DOCX to PDF via textutil (DOCX → HTML) + Chrome headless (HTML → PDF).
+    """Convert DOCX → PDF.
 
-    Both tools are available without extra installation on a typical Mac:
-    • textutil — macOS built-in at /usr/bin/textutil
-    • Google Chrome — headless PDF export via --print-to-pdf
+    Priority:
+      1. LibreOffice headless — fully silent, high-quality, preserves layout.
+         Install: brew install --cask libreoffice
+      2. textutil + Chrome headless — always available, but lower fidelity.
 
     Background: Word 16.109.1 regressed every AppleScript/JXA PDF-export verb
-    (saveAs, exportAsFixedFormat, do Visual Basic) to -1708 errAEEventNotHandled,
-    making direct Word automation impossible. This pipeline works around that.
+    (saveAs, exportAsFixedFormat, do Visual Basic) to -1708, so we cannot drive
+    Word directly for this conversion.
     """
+    output_path = os.path.splitext(os.path.abspath(input_path))[0] + ".pdf"
+
+    # ── Option 1: LibreOffice headless ────────────────────────────────────
+    if os.path.exists(_SOFFICE):
+        outdir = os.path.dirname(output_path)
+        r = subprocess.run(
+            [_SOFFICE, "--headless", "--convert-to", "pdf", "--outdir", outdir, input_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if r.returncode == 0 and os.path.exists(output_path):
+            return ConversionResult(input_path, output_path=output_path)
+        # LibreOffice failed — fall through to Chrome fallback
+
+    # ── Option 2: textutil → Chrome headless ─────────────────────────────
     import tempfile
 
-    output_path = os.path.splitext(input_path)[0] + ".pdf"
-
-    # ── Step 1: DOCX → HTML via macOS textutil ────────────────────────────
     with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tf:
         html_path = tf.name
 
@@ -107,12 +122,14 @@ def convert_docx_to_pdf(input_path: str) -> ConversionResult:
                 error=(r1.stderr or r1.stdout).strip()[:120] or "textutil conversion failed",
             )
 
-        # ── Step 2: HTML → PDF via Chrome headless ────────────────────────
         chrome = _find_chrome()
         if chrome is None:
             return ConversionResult(
                 input_path,
-                error="Chrome not found — install Google Chrome to enable DOCX→PDF",
+                error=(
+                    "No PDF converter found. Install LibreOffice for best quality: "
+                    "brew install --cask libreoffice"
+                ),
             )
 
         r2 = subprocess.run(

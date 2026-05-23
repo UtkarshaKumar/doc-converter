@@ -61,11 +61,22 @@ cp "$SCRIPT_DIR/scripts/convert.py" "$INSTALL_DIR/convert.py"
 chmod +x "$INSTALL_DIR/convert.py"
 printf "   %s/convert.py\n" "$INSTALL_DIR"
 
-# ── 4. Generate Automator Quick Action workflows ──────────────────────────
 # Workflows are standard macOS Service packages (~/Library/Services/*.workflow).
 # The plist is generated via Python so all XML escaping is handled correctly.
 # The venv Python path is hardcoded in the command string so Automator's
 # restricted PATH does not matter.
+# ── 3b. Check for LibreOffice (optional, improves DOCX→PDF quality) ──────
+step "Checking for LibreOffice (optional PDF converter)…"
+SOFFICE="/Applications/LibreOffice.app/Contents/MacOS/soffice"
+if [[ -x "$SOFFICE" ]]; then
+    printf "   LibreOffice found ✓ — high-quality DOCX→PDF enabled\n"
+else
+    warn "LibreOffice not found. DOCX→PDF will use Chrome headless (lower quality)."
+    printf "   For best quality, install it anytime with:\n"
+    printf "   ${BOLD}brew install --cask libreoffice${NC}\n\n"
+fi
+
+# ── 4. Generate Automator Quick Action workflows ──────────────────────────
 step "Creating Finder Quick Actions…"
 mkdir -p "$SERVICES_DIR"
 
@@ -78,9 +89,31 @@ script     = os.path.join(home, ".doc-converter", "convert.py")
 svc_dir    = os.path.join(home, "Library", "Services")
 
 
-def make_workflow(name: str, command: str) -> None:
+def make_workflow(name: str, command: str, send_types: list) -> None:
     contents = os.path.join(svc_dir, f"{name}.workflow", "Contents")
     os.makedirs(contents, exist_ok=True)
+
+    # ── Info.plist ────────────────────────────────────────────────────────
+    # macOS uses this file to discover and register the service.
+    # Without it, lsregister cannot scan the workflow and nothing appears
+    # in any Finder menu (Quick Actions or Services).
+    # NSSendFileTypes restricts the action to appear only for matching UTIs.
+    bundle_id = "com.local.doc-converter." + name.lower().replace(" ", "").replace("-", "")
+    info = {
+        "CFBundleDevelopmentRegion": "en_US",
+        "CFBundleIdentifier":        bundle_id,
+        "CFBundleName":              name,
+        "CFBundleShortVersionString": "1.0",
+        "NSServices": [{
+            "NSMenuItem":       {"default": name},
+            "NSMessage":        "runWorkflowAsService",
+            "NSRequiredContext": {"NSApplicationIdentifier": "com.apple.finder"},
+            "NSSendFileTypes":  send_types,
+        }],
+    }
+    info_path = os.path.join(contents, "Info.plist")
+    with open(info_path, "wb") as fh:
+        plistlib.dump(info, fh, fmt=plistlib.FMT_XML)
 
     doc = {
         "AMApplicationBuild":    "492",
@@ -154,8 +187,18 @@ def make_workflow(name: str, command: str) -> None:
     print(f"   Created: {name}.workflow")
 
 
-make_workflow("Convert to PDF",  f'{python_bin} "{script}" to_pdf "$@"')
-make_workflow("Convert to Word", f'{python_bin} "{script}" to_docx "$@"')
+make_workflow(
+    "Convert to PDF",
+    f'{python_bin} "{script}" to_pdf "$@"',
+    # Only show when DOCX / legacy DOC files are selected
+    ["org.openxmlformats.wordprocessingml.document", "com.microsoft.word.doc"],
+)
+make_workflow(
+    "Convert to Word",
+    f'{python_bin} "{script}" to_docx "$@"',
+    # Only show when PDF files are selected
+    ["com.adobe.pdf"],
+)
 PYEOF
 
 # ── 5. Enable services in the macOS Quick Actions menu ────────────────────
