@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+
+# The venv lives in ~/.doc-converter/venv/ — never commit it
+# (install.sh recreates it on each machine)
+venv/
