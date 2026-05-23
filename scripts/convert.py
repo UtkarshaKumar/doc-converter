@@ -95,7 +95,7 @@ def convert_docx_to_pdf(input_path: str) -> ConversionResult:
         outdir = os.path.dirname(output_path)
         r = subprocess.run(
             [_SOFFICE, "--headless", "--convert-to", "pdf", "--outdir", outdir, input_path],
-            capture_output=True,
+            capture_output=True,   # suppress noisy soffice Task-policy warnings
             text=True,
             timeout=120,
         )
