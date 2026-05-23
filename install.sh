@@ -3,7 +3,7 @@
 #
 # What this script does:
 #   1. Verifies Python 3 is available
-#   2. Creates an isolated venv at ~/.doc-converter/venv/ and installs packages
+#   2. Creates an isolated venv at ~/.doc-converter/venv/ and installs pdf2docx
 #   3. Deploys the conversion script to ~/.doc-converter/
 #   4. Generates two Automator Quick Action workflows in ~/Library/Services/
 #   5. Refreshes the macOS services registry
@@ -50,10 +50,10 @@ else
     printf "   venv already exists — updating packages.\n"
 fi
 
-step "Installing Python packages (docx2pdf, pdf2docx)…"
+step "Installing Python packages (pdf2docx)…"
 "$VENV_PYTHON" -m pip install --quiet --upgrade pip
-"$VENV_PYTHON" -m pip install --quiet --upgrade docx2pdf pdf2docx
-printf "   docx2pdf ✓   pdf2docx ✓\n"
+"$VENV_PYTHON" -m pip install --quiet --upgrade pdf2docx
+printf "   pdf2docx ✓\n"
 
 # ── 3. Deploy conversion script ───────────────────────────────────────────
 step "Deploying conversion script…"

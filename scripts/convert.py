@@ -65,24 +65,81 @@ class ConversionResult:
 
 # ── Converters ────────────────────────────────────────────────────────────
 
+_CHROME_CANDIDATES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+)
+
+
+def _find_chrome() -> str | None:
+    return next((c for c in _CHROME_CANDIDATES if os.path.exists(c)), None)
+
+
 def convert_docx_to_pdf(input_path: str) -> ConversionResult:
-    # Platform quirk: docx2pdf shells out to osascript/JXA, which opens Word,
-    # exports the file, then closes Word if it wasn't already running.
-    # "Message not understood" from JXA means Word is not installed.
-    try:
-        from docx2pdf import convert  # noqa: PLC0415
-    except ImportError:
-        return ConversionResult(input_path, error="__pkg_missing__")
+    """Convert DOCX to PDF via textutil (DOCX → HTML) + Chrome headless (HTML → PDF).
+
+    Both tools are available without extra installation on a typical Mac:
+    • textutil — macOS built-in at /usr/bin/textutil
+    • Google Chrome — headless PDF export via --print-to-pdf
+
+    Background: Word 16.109.1 regressed every AppleScript/JXA PDF-export verb
+    (saveAs, exportAsFixedFormat, do Visual Basic) to -1708 errAEEventNotHandled,
+    making direct Word automation impossible. This pipeline works around that.
+    """
+    import tempfile
 
     output_path = os.path.splitext(input_path)[0] + ".pdf"
+
+    # ── Step 1: DOCX → HTML via macOS textutil ────────────────────────────
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as tf:
+        html_path = tf.name
+
     try:
-        convert(input_path, output_path)
+        r1 = subprocess.run(
+            ["textutil", "-convert", "html", input_path, "-output", html_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r1.returncode != 0:
+            return ConversionResult(
+                input_path,
+                error=(r1.stderr or r1.stdout).strip()[:120] or "textutil conversion failed",
+            )
+
+        # ── Step 2: HTML → PDF via Chrome headless ────────────────────────
+        chrome = _find_chrome()
+        if chrome is None:
+            return ConversionResult(
+                input_path,
+                error="Chrome not found — install Google Chrome to enable DOCX→PDF",
+            )
+
+        r2 = subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--disable-gpu",
+                f"--print-to-pdf={output_path}",
+                "--no-pdf-header-footer",
+                html_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if r2.returncode != 0 or not os.path.exists(output_path):
+            return ConversionResult(
+                input_path,
+                error=(r2.stderr or r2.stdout).strip()[:120] or "Chrome PDF export failed",
+            )
+
         return ConversionResult(input_path, output_path=output_path)
-    except Exception as exc:
-        msg = str(exc)
-        if "Message not understood" in msg or "not running" in msg.lower():
-            return ConversionResult(input_path, error="__word_not_installed__")
-        return ConversionResult(input_path, error=msg[:120])
+
+    finally:
+        if os.path.exists(html_path):
+            os.unlink(html_path)
 
 
 def convert_pdf_to_docx(input_path: str) -> ConversionResult:
