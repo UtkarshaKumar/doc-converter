@@ -158,10 +158,51 @@ make_workflow("Convert to PDF",  f'{python_bin} "{script}" to_pdf "$@"')
 make_workflow("Convert to Word", f'{python_bin} "{script}" to_docx "$@"')
 PYEOF
 
-# ── 5. Reload macOS services registry ─────────────────────────────────────
-step "Refreshing macOS services…"
+# ── 5. Enable services in the macOS Quick Actions menu ────────────────────
+# macOS requires third-party services to be explicitly enabled. Write the
+# enabled state into pbs (pasteboard server) preferences so both actions
+# appear in Quick Actions immediately without the user touching Customize.
+# Note: do NOT killall cfprefsd — that flushes unsaved preferences and
+# would wipe any settings the user changed since last sync.
+# Note: `defaults -dict-add` cannot handle keys containing parentheses,
+# so we use a Python export→merge→import cycle instead.
+step "Enabling Quick Actions in Finder…"
+"$VENV_PYTHON" << 'PYEOF'
+import plistlib, subprocess, sys
+
+tmp = "/tmp/pbs_export.plist"
+subprocess.run(["defaults", "export", "pbs", tmp], check=True)
+
+with open(tmp, "rb") as f:
+    pbs = plistlib.load(f)
+
+entry = {
+    "presentation_modes": {
+        "ContextMenu":   True,
+        "FinderPreview": True,
+        "ServicesMenu":  True,
+        "TouchBar":      False,
+    }
+}
+pbs.setdefault("NSServicesStatus", {})
+pbs["NSServicesStatus"]["(com.apple.Automator) - Convert to PDF"]  = entry
+pbs["NSServicesStatus"]["(com.apple.Automator) - Convert to Word"] = entry
+
+with open(tmp, "wb") as f:
+    plistlib.dump(pbs, f, fmt=plistlib.FMT_XML)
+
+subprocess.run(["defaults", "import", "pbs", tmp], check=True)
+print("   Convert to PDF  ✓  enabled")
+print("   Convert to Word ✓  enabled")
+PYEOF
+
+# ── 6. Reload macOS services registry ─────────────────────────────────────
+step "Refreshing macOS services registry…"
 /System/Library/CoreServices/pbs -update 2>/dev/null || true
-killall cfprefsd 2>/dev/null || true
+
+# Restart Finder to pick up the new services and preference changes.
+step "Restarting Finder…"
+killall Finder 2>/dev/null || true
 
 printf "\n  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 printf "  ${BOLD}Installation complete!${NC}\n\n"
@@ -171,5 +212,5 @@ printf "   • Right-click any .pdf          →  Quick Actions  →  ${BOLD}Con
 printf "   • Select multiple files and convert them all at once.\n\n"
 warn "DOCX → PDF requires Microsoft Word (used for exact-fidelity export)."
 warn "Word will briefly appear in the Dock during conversion — this is expected."
-printf "\n  If Quick Actions don't appear yet, restart Finder:\n"
-printf "  ${BOLD}killall Finder${NC}\n\n"
+printf "\n  If Quick Actions still don't appear, open System Settings and enable them:\n"
+printf "  ${BOLD}System Settings → Keyboard → Keyboard Shortcuts → Services${NC}\n\n"
