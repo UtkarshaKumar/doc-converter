@@ -11,7 +11,8 @@ This tool puts the conversion one right-click away — no app switch, no menus, 
 - Select multiple files and convert them all at once
 - Output lands in the same folder as the original, silently — no app windows open
 - A native macOS notification confirms when it's done (or tells you exactly what went wrong)
-<img width="643" height="626" alt="image" src="https://github.com/user-attachments/assets/3c92d67e-913b-46a9-b271-479ce890a00d" />
+<img width="1280" height="617" alt="image" src="https://github.com/user-attachments/assets/00b0a167-22db-4022-af3e-79eba3c15ef7" />
+
 
 ## Requirements
 
